@@ -1,0 +1,34 @@
+{
+  "name": "opsdesk",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:integration": "pnpm --filter @opsdesk/db migrate:test && turbo run test:integration --concurrency=1",
+    "db:generate": "pnpm --filter @opsdesk/db generate",
+    "db:migrate": "pnpm --filter @opsdesk/db migrate:deploy",
+    "db:seed": "pnpm --filter @opsdesk/db seed",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "client:check": "pnpm --filter @opsdesk/client-config check:client",
+    "db:bootstrap": "pnpm --filter @opsdesk/db bootstrap",
+    "db:setup": "pnpm db:migrate && pnpm db:bootstrap && pnpm db:seed",
+    "e2e": "pnpm --filter @opsdesk/e2e e2e"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3",
+    "typescript": "~5.7.2",
+    "typescript-eslint": "^8.18.2"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "@opsdesk/client-config",
+  "version": "0.0.0",
+  "private": true,
+  "description": "THIS deployment's white-label config. Edit client.config.ts (or build with another client's file).",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "check": "node -e \"require('./dist').loadClientConfig(); console.log('client config OK')\"",
+    "check:client": "tsx check-client.ts"
+  },
+  "dependencies": {
+    "@opsdesk/config": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "~5.7.2",
+    "tsx": "^4.19.2"
+  }
+}

@@ -1,0 +1,17 @@
+node_modules
+dist
+.next
+.turbo
+coverage
+*.tsbuildinfo
+.env
+.env.local
+.env.test.local
+next-env.d.ts
+
+# Per-client deployment folders hold secrets (.env). Only the example is tracked.
+clients/*
+!clients/example/
+
+# Local editor/agent tooling
+.claude/

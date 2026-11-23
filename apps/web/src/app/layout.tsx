@@ -1,0 +1,56 @@
+import { getPublicClientConfig } from "@opsdesk/client-config";
+import { GeistMono } from "geist/font/mono";
+import { GeistSans } from "geist/font/sans";
+import type { Metadata, Viewport } from "next";
+import type { CSSProperties, ReactNode } from "react";
+import { ClientConfigProvider } from "@opsdesk/ui/client-config";
+import { Providers } from "@/components/providers";
+import "./globals.css";
+
+/**
+ * White-label: branding comes from config/client.config.ts + CLIENT_* env vars,
+ * read at REQUEST time (not baked in at build), so an env override changes the
+ * live app on restart without a rebuild.
+ */
+export const dynamic = "force-dynamic";
+
+export function generateMetadata(): Metadata {
+  const c = getPublicClientConfig();
+  return {
+    title: { default: c.appName, template: `%s · ${c.appName}` },
+    description: c.branding.tagline ?? `${c.business.name}: bookings, dispatch, jobs and invoicing.`,
+    icons: c.branding.faviconUrl ? { icon: c.branding.faviconUrl } : undefined,
+  };
+}
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#121214" },
+  ],
+};
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  const config = getPublicClientConfig();
+  // The client's brand colour replaces the --brand token everywhere (buttons, focus rings, charts),
+  // with a foreground picked for WCAG contrast.
+  const brand = {
+    "--brand": config.branding.primaryColor,
+    "--brand-foreground": config.branding.primaryForeground,
+  } as CSSProperties;
+  return (
+    // suppressHydrationWarning: next-themes sets the theme class before React hydrates.
+    <html
+      lang={config.business.locale}
+      className={`${GeistSans.variable} ${GeistMono.variable}`}
+      style={brand}
+      suppressHydrationWarning
+    >
+      <body className="min-h-dvh font-sans">
+        <ClientConfigProvider value={config}>
+          <Providers>{children}</Providers>
+        </ClientConfigProvider>
+      </body>
+    </html>
+  );
+}

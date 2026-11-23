@@ -1,0 +1,43 @@
+{
+  "name": "@opsdesk/tech",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Technician PWA (offline-capable), served at /tech. The `technicianApp` feature.",
+  "scripts": {
+    "dev": "next dev --port 3001",
+    "build": "next build",
+    "start": "next start --port 3001",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@opsdesk/client-config": "workspace:*",
+    "@opsdesk/config": "workspace:*",
+    "@opsdesk/shared": "workspace:*",
+    "@opsdesk/ui": "workspace:*",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@tanstack/query-async-storage-persister": "^5.90.2",
+    "@tanstack/react-query": "^5.90.2",
+    "@tanstack/react-query-persist-client": "^5.90.2",
+    "geist": "^1.5.1",
+    "idb-keyval": "^6.2.2",
+    "lucide-react": "^0.544.0",
+    "motion": "^12.23.12",
+    "next": "^15.5.4",
+    "next-themes": "^0.4.6",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "socket.io-client": "^4.8.1",
+    "sonner": "^2.0.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.13",
+    "@types/node": "^22.18.0",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "tailwindcss": "^4.1.13",
+    "typescript": "~5.7.2",
+    "vitest": "^3.2.4"
+  }
+}

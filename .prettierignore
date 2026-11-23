@@ -1,0 +1,11 @@
+pnpm-lock.yaml
+**/dist
+**/.next
+**/migrations/**/*.sql
+.claude
+node_modules
+**/next-env.d.ts
+
+# Playwright artifacts
+e2e/test-results
+e2e/playwright-report

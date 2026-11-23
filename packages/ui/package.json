@@ -1,0 +1,73 @@
+{
+  "name": "@opsdesk/ui",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Design system shared by the web dashboard and the technician PWA (source-only; apps transpile it).",
+  "sideEffects": [
+    "*.css"
+  ],
+  "exports": {
+    "./styles.css": "./src/styles.css",
+    "./avatar": "./src/components/avatar.tsx",
+    "./button": "./src/components/button.tsx",
+    "./card": "./src/components/card.tsx",
+    "./client-config": "./src/components/client-config.tsx",
+    "./combobox": "./src/components/combobox.tsx",
+    "./confirm-dialog": "./src/components/confirm-dialog.tsx",
+    "./count-up": "./src/components/count-up.tsx",
+    "./dialog": "./src/components/dialog.tsx",
+    "./dropdown-menu": "./src/components/dropdown-menu.tsx",
+    "./field": "./src/components/field.tsx",
+    "./illustrations": "./src/components/illustrations.tsx",
+    "./input": "./src/components/input.tsx",
+    "./logo": "./src/components/logo.tsx",
+    "./page-title": "./src/components/page-title.tsx",
+    "./page-transition": "./src/components/page-transition.tsx",
+    "./pagination": "./src/components/pagination.tsx",
+    "./skeleton": "./src/components/skeleton.tsx",
+    "./stagger": "./src/components/stagger.tsx",
+    "./states": "./src/components/states.tsx",
+    "./status-badge": "./src/components/status-badge.tsx",
+    "./table": "./src/components/table.tsx",
+    "./theme-toggle": "./src/components/theme-toggle.tsx",
+    "./utils": "./src/lib/utils.ts",
+    "./motion": "./src/lib/motion.ts",
+    "./bottom-sheet": "./src/components/bottom-sheet.tsx",
+    "./success-check": "./src/components/success-check.tsx",
+    "./confetti": "./src/components/confetti.tsx",
+    "./charts": "./src/components/charts.tsx"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@opsdesk/config": "workspace:*",
+    "@opsdesk/shared": "workspace:*",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-label": "^2.1.7",
+    "@radix-ui/react-popover": "^1.1.15",
+    "@radix-ui/react-slot": "^1.2.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
+    "lucide-react": "^0.544.0",
+    "motion": "^12.23.12",
+    "next-themes": "^0.4.6",
+    "tailwind-merge": "^3.3.1"
+  },
+  "peerDependencies": {
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "typescript": "~5.7.2",
+    "vitest": "^3.2.4"
+  }
+}

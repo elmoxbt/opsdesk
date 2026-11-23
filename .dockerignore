@@ -1,0 +1,16 @@
+# Build context hygiene: no host node_modules/build output, no secrets.
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/coverage
+.git
+.claude
+*.log
+.env
+.env.*
+!.env.example
+!.env.test
+# Client folders are needed (their client.config.ts is built in), but never their secrets.
+clients/*/.env
+config/.check

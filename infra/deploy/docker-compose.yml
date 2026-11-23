@@ -1,0 +1,189 @@
+# Production stack for ONE client on ONE server.
+# Don't run this by hand: scripts/deploy-client.sh sets the project name,
+# env file and client config, generates secrets, and runs migrations/bootstrap.
+#
+#   Internet ──► Caddy :443 (automatic HTTPS) ──► /api, /socket.io → api
+#                                             └─► everything else  → web
+#                FILES_DOMAIN ─────────────────► minio (presigned URLs only)
+# Postgres, Redis and MinIO are never published to the host or the internet.
+
+x-env: &client-env
+  env_file:
+    - ${CLIENT_ENV_FILE:?run via scripts/deploy-client.sh}
+
+# Shared by the API and the worker (same image, same config).
+x-api-env: &api-env
+  NODE_ENV: production
+  API_PORT: "4000"
+  DATABASE_URL: postgresql://opsdesk:${POSTGRES_PASSWORD}@postgres:5432/opsdesk?schema=public
+  REDIS_URL: redis://redis:6379
+  QUEUE_DRIVER: bullmq
+  WEB_ORIGIN: https://${APP_DOMAIN}
+  APP_URL: https://${APP_DOMAIN}
+  TRUST_PROXY_HOPS: "1" # Caddy
+  CLIENT_APP_DOMAIN: ${APP_DOMAIN}
+  COOKIE_SECURE: "true"
+  S3_ENDPOINT: http://minio:9000
+  S3_PUBLIC_ENDPOINT: https://${FILES_DOMAIN}
+  S3_BUCKET: opsdesk
+
+services:
+  caddy:
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      FILES_DOMAIN: ${FILES_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # certificates live here: back it up or you'll re-issue (rate limits)
+      - caddy_config:/config
+    depends_on:
+      web: { condition: service_healthy }
+      api: { condition: service_healthy }
+
+  web:
+    <<: *client-env
+    build:
+      context: ../..
+      dockerfile: infra/docker/web.Dockerfile
+      args: { CLIENT_CONFIG: "${CLIENT_CONFIG:?}" }
+    image: opsdesk-web:${COMPOSE_PROJECT_NAME}
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:4000
+      CLIENT_APP_DOMAIN: ${APP_DOMAIN} # the deployment's DNS name wins over client.config.ts
+
+  # Technician PWA at /tech (the `technicianApp` feature). deploy-client.sh only
+  # starts it when the client has the feature on (COMPOSE_PROFILES=technician-app).
+  tech:
+    <<: *client-env
+    profiles: ["technician-app"]
+    build:
+      context: ../..
+      dockerfile: infra/docker/tech.Dockerfile
+      args: { CLIENT_CONFIG: "${CLIENT_CONFIG:?}" }
+    image: opsdesk-tech:${COMPOSE_PROJECT_NAME}
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:4000
+      CLIENT_APP_DOMAIN: ${APP_DOMAIN}
+
+  api:
+    <<: *client-env
+    build:
+      context: ../..
+      dockerfile: infra/docker/api.Dockerfile
+      args: { CLIENT_CONFIG: "${CLIENT_CONFIG:?}" }
+    image: opsdesk-api:${COMPOSE_PROJECT_NAME}
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+
+  # Background jobs: invoice PDFs, overdue reminders. The API only enqueues to Redis;
+  # if the worker is down, jobs wait in Redis and run when it's back.
+  worker:
+    <<: *client-env
+    image: opsdesk-api:${COMPOSE_PROJECT_NAME}
+    command: ["worker"]
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+      RUN_WORKER: "true"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+
+  postgres:
+    image: postgres:16.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: opsdesk
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: opsdesk
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opsdesk -d opsdesk"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    restart: unless-stopped
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?}
+      # Browsers PUT photos straight to FILES_DOMAIN from the app origin: allow exactly that origin.
+      MINIO_API_CORS_ALLOW_ORIGIN: https://${APP_DOMAIN}
+    volumes: [miniodata:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Creates the private bucket (idempotent). Orphaned uploads (presigned but never
+  # confirmed) are swept by a scheduled job in Phase 5, not by a lifecycle rule:
+  # S3 can't tell an unconfirmed object from a real one.
+  minio-init:
+    image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    depends_on:
+      minio: { condition: service_healthy }
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+    entrypoint: >
+      /bin/sh -c "
+      set -e;
+      mc alias set local http://minio:9000 \"$$S3_ACCESS_KEY\" \"$$S3_SECRET_KEY\";
+      mc mb --ignore-existing local/opsdesk;
+      mc anonymous set none local/opsdesk;
+      "
+
+  # Nightly database dump + file mirror, kept locally and (optionally) copied off-site.
+  backup:
+    build:
+      context: .
+      dockerfile: backup.Dockerfile
+    image: opsdesk-backup:${COMPOSE_PROJECT_NAME}
+    restart: unless-stopped
+    <<: *client-env
+    environment:
+      PGHOST: postgres
+      PGUSER: opsdesk
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: opsdesk
+      CLIENT_NAME: ${COMPOSE_PROJECT_NAME}
+      S3_SOURCE_ENDPOINT: http://minio:9000
+    volumes:
+      - backups:/backups
+    depends_on:
+      postgres: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  backups:
+  caddy_data:
+  caddy_config:

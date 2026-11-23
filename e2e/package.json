@@ -1,0 +1,14 @@
+{
+  "name": "@opsdesk/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "report": "playwright show-report",
+    "typecheck": "tsc --noEmit",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@types/node": "^22.18.0"
+  }
+}

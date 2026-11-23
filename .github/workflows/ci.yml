@@ -1,0 +1,177 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+  TURBO_TELEMETRY_DISABLED: "1"
+
+jobs:
+  quality:
+    name: Lint · Typecheck · Unit tests · Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  integration:
+    name: Integration tests (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: opsdesk
+          POSTGRES_PASSWORD: opsdesk
+          POSTGRES_DB: opsdesk_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U opsdesk"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://opsdesk:opsdesk@localhost:5432/opsdesk_test?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:integration
+
+  e2e:
+    name: End-to-end golden path (Playwright)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: opsdesk
+          POSTGRES_PASSWORD: opsdesk
+          POSTGRES_DB: opsdesk
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U opsdesk"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # A demo stack: the API in dev mode (fake payments, inline queue), production builds of web + tech.
+      DATABASE_URL: postgresql://opsdesk:opsdesk@localhost:5432/opsdesk?schema=public
+      JWT_ACCESS_SECRET: ci-only-jwt-secret-that-is-long-enough-123456
+      WEB_ORIGIN: http://localhost:3000,http://localhost:3001
+      APP_URL: http://localhost:3000
+      S3_ENDPOINT: http://localhost:9000
+      S3_ACCESS_KEY: opsdesk
+      S3_SECRET_KEY: opsdesk-secret
+      S3_BUCKET: opsdesk
+      OWNER_INITIAL_PASSWORD: demo-password-123
+      DEMO_LOGINS: "true"
+      RATE_LIMIT_MULTIPLIER: "20"
+      NEXT_PUBLIC_REALTIME_URL: http://localhost:4000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: MinIO (S3) for photos, signatures and PDFs
+        run: |
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=opsdesk -e MINIO_ROOT_PASSWORD=opsdesk-secret             -e MINIO_API_CORS_ALLOW_ORIGIN="*" minio/minio:RELEASE.2024-12-18T13-15-44Z server /data
+          for i in $(seq 1 30); do curl -sf http://localhost:9000/minio/health/live && break; sleep 2; done
+          docker run --rm --network host --entrypoint sh minio/mc:RELEASE.2024-11-21T17-21-54Z -c             "mc alias set local http://localhost:9000 opsdesk opsdesk-secret && mc mb --ignore-existing local/opsdesk"
+      - run: pnpm build
+      - name: Database, business and demo data
+        run: |
+          pnpm --filter @opsdesk/db migrate:deploy
+          pnpm db:bootstrap
+          pnpm db:seed
+      - name: Start API, web and technician app
+        run: |
+          node apps/api/dist/main.js > api.log 2>&1 &
+          pnpm --filter @opsdesk/web start > web.log 2>&1 &
+          pnpm --filter @opsdesk/tech start > tech.log 2>&1 &
+          for url in http://localhost:4000/api/health http://localhost:3000/login http://localhost:3001/tech/login; do
+            for i in $(seq 1 60); do curl -sf -o /dev/null "$url" && break; sleep 2; done
+          done
+      - run: pnpm --filter @opsdesk/e2e exec playwright install --with-deps chromium
+      - run: pnpm e2e
+        env:
+          E2E_BASE_URL: http://localhost:3000
+          E2E_TECH_URL: http://localhost:3001/tech
+      - name: Keep the report and server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+            *.log
+          retention-days: 7
+
+  deploy-artifacts:
+    name: Deploy artifacts (scripts, compose, images)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck deploy scripts
+        run: shellcheck -x scripts/*.sh infra/deploy/backup.sh infra/docker/api-entrypoint.sh
+      - name: Render the production compose file with the example client
+        run: |
+          cp clients/example/.env.example /tmp/example.env
+          sed -i 's/=generate$/=ci-placeholder-secret/' /tmp/example.env
+          COMPOSE_PROJECT_NAME=opsdesk-example CLIENT_CONFIG=clients/example/client.config.ts CLIENT_ENV_FILE=/tmp/example.env \
+            docker compose -f infra/deploy/docker-compose.yml --env-file /tmp/example.env config --quiet
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API image (example client config compiled in)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/api.Dockerfile
+          build-args: CLIENT_CONFIG=clients/example/client.config.ts
+          push: false
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/web.Dockerfile
+          build-args: CLIENT_CONFIG=clients/example/client.config.ts
+          push: false
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+      - name: Build backup image
+        run: docker build -f infra/deploy/backup.Dockerfile infra/deploy
+      - name: Build technician PWA image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/tech.Dockerfile
+          build-args: CLIENT_CONFIG=clients/example/client.config.ts
+          push: false
+          cache-from: type=gha,scope=tech
+          cache-to: type=gha,mode=max,scope=tech

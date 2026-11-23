@@ -1,0 +1,674 @@
+// OpsDesk data model.
+//
+// Tenancy: row-level. Every tenant-owned model has `organizationId`, and the
+// Prisma client extension in src/tenant-extension.ts injects it into every
+// query. Required relations between tenant-owned models use COMPOSITE foreign
+// keys (id, organizationId), so Postgres itself rejects a row that points at
+// another tenant's record, even if application code has a bug.
+//
+// Money is stored as integer minor units (kobo/cents) to avoid float rounding.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  DISPATCHER
+  TECHNICIAN
+}
+
+enum JobStatus {
+  REQUESTED
+  SCHEDULED
+  EN_ROUTE
+  IN_PROGRESS
+  COMPLETED
+  INVOICED
+  PAID
+  CANCELLED
+}
+
+enum PhotoKind {
+  BEFORE
+  AFTER
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  DECLINED
+  CONVERTED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+}
+
+enum PaymentProvider {
+  PAYSTACK
+  STRIPE
+  /// Cash / bank transfer recorded by staff.
+  MANUAL
+  /// Local dev/test stand-in checkout. Refused in production by env validation.
+  FAKE
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+/// Where a job came from (dashboard staff, the public booking page, the public API).
+enum JobSource {
+  DASHBOARD
+  BOOKING
+  API
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+enum ActorType {
+  USER
+  SYSTEM
+  API_KEY
+  PUBLIC
+}
+
+// ---------------------------------------------------------------------------
+// Tenant root
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String
+  slug       String   @unique
+  logoUrl    String?
+  brandColor String   @default("#4f46e5")
+  currency   String   @default("NGN") @db.Char(3)
+  timezone   String   @default("Africa/Lagos")
+  /// Per-tenant sequence for human-friendly job numbers (JOB-0042). Incremented atomically.
+  jobSeq     Int      @default(0)
+  /// Same pattern for Q-0001 and INV-0001.
+  quoteSeq   Int      @default(0)
+  invoiceSeq Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  users             User[]
+  invitations       Invitation[]
+  customers         Customer[]
+  serviceTypes      ServiceType[]
+  jobs              Job[]
+  jobPhotos         JobPhoto[]
+  signatures        Signature[]
+  inventoryItems    InventoryItem[]
+  jobParts          JobPart[]
+  quotes            Quote[]
+  quoteLineItems    QuoteLineItem[]
+  invoices          Invoice[]
+  invoiceLineItems  InvoiceLineItem[]
+  payments          Payment[]
+  auditLogs         AuditLog[]
+  apiKeys           ApiKey[]
+  webhookEndpoints  WebhookEndpoint[]
+  webhookDeliveries WebhookDelivery[]
+  idempotencyKeys   IdempotencyRecord[]
+  notifications     Notification[]
+}
+
+// ---------------------------------------------------------------------------
+// Identity & access
+// ---------------------------------------------------------------------------
+
+model User {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  // Globally unique so login needs only email + password (one user = one org).
+  email          String    @unique
+  name           String
+  passwordHash   String
+  role           Role
+  avatarUrl      String?
+  isActive       Boolean   @default(true)
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  refreshTokens   RefreshToken[]
+  invitationsSent Invitation[]
+  assignedJobs    Job[]
+  uploadedPhotos  JobPhoto[]
+  auditLogs       AuditLog[]
+  apiKeys         ApiKey[]
+
+  @@unique([id, organizationId])
+  @@index([organizationId, role])
+}
+
+/// Auth infrastructure, not tenant data: only ever accessed through the
+/// unscoped client by the auth module. Stores a SHA-256 of the opaque token.
+model RefreshToken {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @db.Uuid
+  /// All tokens descended from one login share a family; reuse of a rotated
+  /// token revokes the whole family (stolen-token detection).
+  familyId     String    @db.Uuid
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?   @db.Uuid
+  userAgent    String?
+  ip           String?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
+  @@index([userId])
+}
+
+model Invitation {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  email          String
+  role           Role
+  tokenHash      String    @unique
+  invitedById    String    @db.Uuid
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation(fields: [invitedById, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@index([organizationId, email])
+}
+
+// ---------------------------------------------------------------------------
+// Customers, services, jobs
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  name           String
+  phone          String
+  /// Digits-only, last 10 digits: "+234 803 555 0101" and "0803 555 0101" match (repeat bookers aren't duplicated).
+  phoneKey       String?
+  email          String?
+  address        String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  jobs         Job[]
+  quotes       Quote[]
+  invoices     Invoice[]
+
+  @@unique([id, organizationId])
+  @@index([organizationId, name])
+  @@index([organizationId, phone])
+  @@index([organizationId, phoneKey])
+}
+
+model ServiceType {
+  id                     String   @id @default(uuid()) @db.Uuid
+  organizationId         String   @db.Uuid
+  name                   String
+  description            String?
+  defaultDurationMinutes Int
+  defaultPriceMinor      Int
+  isActive               Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  jobs         Job[]
+
+  @@unique([id, organizationId])
+  @@unique([organizationId, name])
+}
+
+model Job {
+  id                 String    @id @default(uuid()) @db.Uuid
+  organizationId     String    @db.Uuid
+  number             Int
+  customerId         String    @db.Uuid
+  serviceTypeId      String    @db.Uuid
+  technicianId       String?   @db.Uuid
+  status             JobStatus @default(REQUESTED)
+  scheduledStart     DateTime?
+  scheduledEnd       DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  cancellationReason String?
+  /// [{ id, label, done }] — small, always read with the job, so JSON beats a table.
+  checklist          Json      @default("[]")
+  notes              String?
+  priceMinor         Int?
+  /// Optimistic-concurrency counter, bumped on every update (used by offline sync).
+  version            Int       @default(1)
+  source             JobSource @default(DASHBOARD)
+  /// Unguessable token for the customer's "booking status" page (online bookings only).
+  bookingToken       String?   @unique
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer     @relation(fields: [customerId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  serviceType  ServiceType  @relation(fields: [serviceTypeId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  technician   User?        @relation(fields: [technicianId], references: [id], onDelete: SetNull)
+  photos       JobPhoto[]
+  signature    Signature?
+  parts        JobPart[]
+  quotes       Quote[]
+  invoice      Invoice?
+  // Also: EXCLUDE constraint "Job_technician_no_overlap" (no overlapping committed jobs per
+  // technician), added in migration 20261119000000_no_double_booking. Prisma cannot model it.
+
+  @@unique([organizationId, number])
+  @@unique([id, organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, scheduledStart])
+  @@index([technicianId, scheduledStart])
+}
+
+model JobPhoto {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  jobId          String    @db.Uuid
+  kind           PhotoKind
+  /// Unique: confirming the same upload twice (offline replay) is a no-op, not a duplicate photo.
+  s3Key          String    @unique
+  contentType    String
+  sizeBytes      Int?
+  uploadedById   String?   @db.Uuid
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job          Job          @relation(fields: [jobId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  uploadedBy   User?        @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, jobId])
+}
+
+model Signature {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  jobId          String   @unique @db.Uuid
+  s3Key          String
+  signedByName   String
+  signedAt       DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job          Job          @relation(fields: [jobId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@unique([jobId, organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Inventory
+// ---------------------------------------------------------------------------
+
+model InventoryItem {
+  id                String    @id @default(uuid()) @db.Uuid
+  organizationId    String    @db.Uuid
+  name              String
+  sku               String
+  quantity          Int       @default(0)
+  reorderThreshold  Int       @default(0)
+  unitCostMinor     Int
+  /// Set when the low-stock alert went out; cleared when restocked above the threshold. One alert per dip.
+  lowStockAlertedAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  jobParts     JobPart[]
+
+  @@unique([id, organizationId])
+  @@unique([organizationId, sku])
+}
+
+model JobPart {
+  id              String   @id @default(uuid()) @db.Uuid
+  organizationId  String   @db.Uuid
+  jobId           String   @db.Uuid
+  inventoryItemId String   @db.Uuid
+  quantity        Int
+  /// Snapshot of cost at time of use; later price changes don't rewrite history.
+  unitCostMinor   Int
+  createdAt       DateTime @default(now())
+
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job           Job           @relation(fields: [jobId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId, organizationId], references: [id, organizationId], onDelete: Restrict)
+
+  @@index([organizationId, jobId])
+}
+
+// ---------------------------------------------------------------------------
+// Quotes, invoices, payments
+// ---------------------------------------------------------------------------
+
+model Quote {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @db.Uuid
+  number         String
+  customerId     String      @db.Uuid
+  jobId          String?     @db.Uuid
+  status         QuoteStatus @default(DRAFT)
+  taxRateBps     Int         @default(0)
+  subtotalMinor  Int         @default(0)
+  taxMinor       Int         @default(0)
+  totalMinor     Int         @default(0)
+  validUntil     DateTime?
+  notes          String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer        @relation(fields: [customerId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  job          Job?            @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  lineItems    QuoteLineItem[]
+  invoice      Invoice?
+
+  @@unique([id, organizationId])
+  @@unique([organizationId, number])
+}
+
+model QuoteLineItem {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  quoteId        String @db.Uuid
+  description    String
+  quantity       Int
+  unitPriceMinor Int
+  totalMinor     Int
+  position       Int
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quote        Quote        @relation(fields: [quoteId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@index([quoteId])
+}
+
+model Invoice {
+  id                 String        @id @default(uuid()) @db.Uuid
+  organizationId     String        @db.Uuid
+  number             String
+  customerId         String        @db.Uuid
+  jobId              String?       @unique @db.Uuid
+  quoteId            String?       @unique @db.Uuid
+  status             InvoiceStatus @default(DRAFT)
+  currency           String        @db.Char(3)
+  taxRateBps         Int           @default(0)
+  subtotalMinor      Int           @default(0)
+  taxMinor           Int           @default(0)
+  totalMinor         Int           @default(0)
+  amountPaidMinor    Int           @default(0)
+  issueDate          DateTime      @default(now())
+  dueDate            DateTime
+  /// Unguessable token for the public "view & pay" page (no login needed).
+  publicToken        String        @unique
+  pdfS3Key           String?
+  /// Bumped whenever the PDF must be (re)rendered; the worker records the version it rendered.
+  /// pdfReady = pdfRenderedVersion == pdfVersion: a stale PDF is never served as current.
+  pdfVersion         Int           @default(0)
+  pdfRenderedVersion Int           @default(0)
+  sentAt             DateTime?
+  paidAt             DateTime?
+  lastReminderAt     DateTime?
+  reminderCount      Int           @default(0)
+  voidedAt           DateTime?
+  voidReason         String?
+  notes              String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer          @relation(fields: [customerId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  job          Job?              @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  quote        Quote?            @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  lineItems    InvoiceLineItem[]
+  payments     Payment[]
+
+  @@unique([id, organizationId])
+  @@unique([organizationId, number])
+  @@index([organizationId, status, dueDate])
+}
+
+model InvoiceLineItem {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  invoiceId      String @db.Uuid
+  description    String
+  quantity       Int
+  unitPriceMinor Int
+  totalMinor     Int
+  position       Int
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoice      Invoice      @relation(fields: [invoiceId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+model Payment {
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @db.Uuid
+  invoiceId      String          @db.Uuid
+  provider       PaymentProvider
+  /// Provider's transaction reference (what webhooks refer to).
+  reference      String
+  amountMinor    Int
+  currency       String          @db.Char(3)
+  status         PaymentStatus   @default(PENDING)
+  /// Client-supplied key making "initiate payment" safe to retry.
+  idempotencyKey String
+  /// Provider-hosted checkout page; returned again for a retried "Pay now".
+  checkoutUrl    String?
+  /// MANUAL payments: how it was paid ("cash", "bank transfer") and a note.
+  method         String?
+  note           String?
+  payerEmail     String?
+  rawPayload     Json?
+  paidAt         DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoice      Invoice      @relation(fields: [invoiceId, organizationId], references: [id, organizationId], onDelete: Restrict)
+
+  @@unique([provider, reference])
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, invoiceId])
+}
+
+// ---------------------------------------------------------------------------
+// Audit & integrations
+// ---------------------------------------------------------------------------
+
+/// Stored responses for requests sent with an `Idempotency-Key` header. A retry
+/// (e.g. the technician app replaying its offline queue after a dropped
+/// connection) gets the original response instead of applying the change twice.
+model IdempotencyRecord {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  key            String
+  /// Method + path the key was first used with; reusing a key elsewhere is a client bug (422).
+  fingerprint    String
+  statusCode     Int
+  responseBody   Json?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, key])
+  @@index([createdAt])
+}
+
+/// Every provider webhook we've processed, keyed by the provider's own event id.
+/// Inserted in the SAME transaction as the payment update: a retry of an event
+/// that was applied is a no-op, and a failed attempt leaves no row (so the retry runs).
+/// System table (no tenant): webhooks arrive before we know whose payment it is.
+model WebhookEvent {
+  id         String          @id @default(uuid()) @db.Uuid
+  provider   PaymentProvider
+  externalId String
+  eventType  String
+  payload    Json
+  receivedAt DateTime        @default(now())
+
+  @@unique([provider, externalId])
+}
+
+/// Every message sent (or attempted) to a customer or staff member: the delivery log.
+/// Rows are created when the message is decided; the worker delivers and records the outcome.
+model Notification {
+  id             String              @id @default(uuid()) @db.Uuid
+  organizationId String              @db.Uuid
+  channel        NotificationChannel
+  recipient      String
+  template       String
+  subject        String?
+  body           String
+  status         NotificationStatus  @default(QUEUED)
+  attempts       Int                 @default(0)
+  error          String?
+  /// What it's about, for "messages sent" on a job/invoice.
+  entityType     String?
+  entityId       String?             @db.Uuid
+  /// Same key twice = one message (e.g. "job-scheduled:<id>:<start>:SMS"), whatever retries or races happen.
+  dedupeKey      String?
+  sentAt         DateTime?
+  createdAt      DateTime            @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, dedupeKey])
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, createdAt])
+}
+
+model AuditLog {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  actorType      ActorType
+  actorId        String?   @db.Uuid
+  action         String
+  entityType     String
+  entityId       String
+  before         Json?
+  after          Json?
+  ip             String?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor        User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, createdAt])
+}
+
+model ApiKey {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  name           String
+  /// First chars of the key, shown in UI and used for lookup; the rest is only stored hashed.
+  prefix         String    @unique
+  keyHash        String
+  scopes         String[]
+  lastUsedAt     DateTime?
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  createdById    String?   @db.Uuid
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+}
+
+model WebhookEndpoint {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  url            String
+  /// HMAC signing secret, AES-256-GCM encrypted with DATA_ENCRYPTION_KEY ("v1:iv:tag:ciphertext").
+  secret         String
+  events         String[]
+  description    String?
+  isActive       Boolean   @default(true)
+  /// Consecutive failed deliveries; the endpoint is switched off at a threshold and reset by any success.
+  failureCount   Int       @default(0)
+  disabledReason String?
+  lastDeliveryAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries   WebhookDelivery[]
+
+  @@unique([id, organizationId])
+  @@index([organizationId])
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+/// One event sent to one endpoint, with every attempt's outcome. The receiver dedupes on eventId.
+model WebhookDelivery {
+  id             String                @id @default(uuid()) @db.Uuid
+  organizationId String                @db.Uuid
+  endpointId     String                @db.Uuid
+  eventId        String                @db.Uuid
+  eventType      String
+  payload        Json
+  status         WebhookDeliveryStatus @default(PENDING)
+  attempts       Int                   @default(0)
+  responseStatus Int?
+  /// First 1 KB of the receiver's response, for debugging.
+  responseBody   String?
+  error          String?
+  durationMs     Int?
+  deliveredAt    DateTime?
+  createdAt      DateTime              @default(now())
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  endpoint     WebhookEndpoint @relation(fields: [endpointId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@unique([endpointId, eventId])
+  @@index([organizationId, endpointId, createdAt])
+}

@@ -1,0 +1,5 @@
+@import "tailwindcss";
+@import "@opsdesk/ui/styles.css";
+
+/* Generate utilities for classes used inside the shared UI package too. */
+@source "../../../../packages/ui/src";

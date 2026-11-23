@@ -1,0 +1,47 @@
+# Automatic HTTPS: Caddy obtains and renews Let's Encrypt certificates for both
+# hostnames as soon as their DNS points here and ports 80/443 are open.
+{
+	email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	# One origin for everything: auth cookies stay first-party, WebSockets need no CORS.
+	@api path /api/* /socket.io/*
+	handle @api {
+		reverse_proxy api:4000
+	}
+
+	# Technician PWA (only running when the client has `technicianApp` on).
+	@tech path /tech /tech/*
+	handle @tech {
+		reverse_proxy tech:3001
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+
+	# With the feature off there's no tech container: answer 404, not a 502.
+	handle_errors 502 {
+		@techOff path /tech /tech/*
+		respond @techOff "Not found" 404
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(self), geolocation=(self), microphone=()"
+		-Server
+	}
+}
+
+# Object storage, reachable ONLY through presigned URLs the API hands out.
+# The Host header is passed through untouched, because presigned signatures cover it.
+{$FILES_DOMAIN} {
+	request_body {
+		max_size 12MB
+	}
+	reverse_proxy minio:9000
+}
