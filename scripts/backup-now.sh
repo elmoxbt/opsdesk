@@ -6,6 +6,7 @@
 # shellcheck source=scripts/lib.sh
 source "$(dirname "$0")/lib.sh"
 use_client "${1:-}"
+# shellcheck disable=SC2119 # Docker only: this script needs no extra tools.
 require_tools
 
 compose run --rm backup once

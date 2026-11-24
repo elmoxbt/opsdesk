@@ -13,6 +13,7 @@ DUMP="${2:-}"
 WITH_FILES=0
 [[ "${3:-}" == "--with-files" ]] && WITH_FILES=1
 [[ "$DUMP" =~ ^[A-Za-z0-9._-]+\.dump$ ]] || die "usage: restore.sh <client> <dump-file> [--with-files]"
+# shellcheck disable=SC2119 # Docker only: this script needs no extra tools.
 require_tools
 
 compose run --rm --entrypoint sh backup -c "test -f /backups/db/$DUMP" || die "no such dump: $DUMP"
