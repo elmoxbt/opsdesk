@@ -1,7 +1,7 @@
 "use client";
 
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { AnimatePresence, motion, type PanInfo, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, type PanInfo, useDragControls, useReducedMotion } from "motion/react";
 import type { ReactNode } from "react";
 import { backdropVariants, transitions } from "../lib/motion";
 import { cn } from "../lib/utils";
@@ -19,8 +19,9 @@ interface BottomSheetProps {
 /**
  * Mobile action sheet. Radix Dialog provides focus trap, Esc and screen-reader
  * semantics; Motion slides it up, and it can be dragged down to dismiss
- * (past 120px or a quick flick). The drag handle is a convenience: the Close
- * button and Esc always work too.
+ * (past 120px or a quick flick). Only the top area (grip + title) starts a
+ * drag: gestures in the content (a signature pad, sliders, scrolling) must
+ * never move or dismiss the sheet. The Close button and Esc always work too.
  */
 export function BottomSheet({
   open,
@@ -32,6 +33,7 @@ export function BottomSheet({
   className,
 }: BottomSheetProps) {
   const reduce = useReducedMotion();
+  const drag = useDragControls();
   const onDragEnd = (_: unknown, info: PanInfo) => {
     if (info.offset.y > 120 || info.velocity.y > 600) onOpenChange(false);
   };
@@ -55,6 +57,8 @@ export function BottomSheet({
                 animate={{ y: 0, transition: transitions.spring }}
                 exit={{ y: "100%", transition: { duration: 0.22, ease: [0.4, 0, 1, 1] } }}
                 drag={reduce ? false : "y"}
+                dragListener={false}
+                dragControls={drag}
                 dragConstraints={{ top: 0, bottom: 0 }}
                 dragElastic={{ top: 0, bottom: 0.6 }}
                 onDragEnd={onDragEnd}
@@ -63,18 +67,24 @@ export function BottomSheet({
                   className,
                 )}
               >
-                <div className="flex justify-center pt-3 pb-1" aria-hidden>
-                  <span className="h-1.5 w-10 rounded-full bg-muted-foreground/30" />
-                </div>
-                <div className="px-5 pb-3">
-                  <DialogPrimitive.Title className="text-lg font-semibold tracking-tight">
-                    {title}
-                  </DialogPrimitive.Title>
-                  <DialogPrimitive.Description
-                    className={description ? "text-sm text-muted-foreground" : "sr-only"}
-                  >
-                    {description ?? title}
-                  </DialogPrimitive.Description>
+                {/* Drag area: grip and title. touch-none so the browser doesn't scroll instead. */}
+                <div
+                  className="cursor-grab touch-none active:cursor-grabbing"
+                  onPointerDown={(e) => drag.start(e)}
+                >
+                  <div className="flex justify-center pt-3 pb-1" aria-hidden>
+                    <span className="h-1.5 w-10 rounded-full bg-muted-foreground/30" />
+                  </div>
+                  <div className="px-5 pb-3">
+                    <DialogPrimitive.Title className="text-lg font-semibold tracking-tight">
+                      {title}
+                    </DialogPrimitive.Title>
+                    <DialogPrimitive.Description
+                      className={description ? "text-sm text-muted-foreground" : "sr-only"}
+                    >
+                      {description ?? title}
+                    </DialogPrimitive.Description>
+                  </div>
                 </div>
                 <div className="flex-1 overflow-y-auto overscroll-contain px-5 pb-4">{children}</div>
                 {footer && <div className="flex flex-col gap-2 border-t px-5 py-3">{footer}</div>}
