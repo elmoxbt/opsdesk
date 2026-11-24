@@ -111,18 +111,15 @@ test("book → schedule → complete on site → invoice → pay", async ({ brow
   const sheet = tech.getByRole("dialog");
   await sheet.getByLabel("Customer name").fill(customer.name);
   const pad = sheet.locator("canvas");
-  const clear = sheet.getByRole("button", { name: "Clear" });
-  // The sheet slides up, so a stroke can land where the pad USED to be. Re-measure
-  // and sign again until the pad reports ink (an extra stroke is harmless).
-  await expect(async () => {
-    const box = (await pad.boundingBox())!;
-    await tech.mouse.move(box.x + 30, box.y + box.height / 2);
-    await tech.mouse.down();
-    for (let i = 1; i <= 12; i++)
-      await tech.mouse.move(box.x + 30 + i * 15, box.y + box.height / 2 + (i % 2 ? -18 : 18));
-    await tech.mouse.up();
-    await expect(clear).toBeEnabled({ timeout: 1_000 }); // ink registered
-  }).toPass({ timeout: 20_000 });
+  // The sheet slides up; a stroke started where the pad USED to be would hit the
+  // backdrop and close it. hover() waits for Playwright's "stable" check (same box
+  // two frames running), so measure only after it.
+  await pad.hover({ position: { x: 30, y: 80 } });
+  const box = (await pad.boundingBox())!;
+  await tech.mouse.down();
+  for (let i = 1; i <= 12; i++) await tech.mouse.move(box.x + 30 + i * 15, box.y + 80 + (i % 2 ? -18 : 18));
+  await tech.mouse.up();
+  await expect(sheet.getByRole("button", { name: "Clear" })).toBeEnabled(); // ink registered
   await sheet.getByRole("button", { name: "Complete job" }).click();
   await expect(tech.getByText("Job completed")).toBeVisible();
 
