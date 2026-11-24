@@ -28,8 +28,14 @@ import { UsersModule } from "./users/users.module";
  */
 @Module({})
 export class AppModule {
-  /** `worker`: the background-job process. Same modules minus the WebSocket gateway (no HTTP server there). */
-  static forRoot(clientConfig: ClientConfig, opts: { worker?: boolean } = {}): DynamicModule {
+  /**
+   * `worker`: the background-job process. `realtime: false`: no WebSocket gateway (serverless
+   * hosts can't hold sockets; clients fall back to refetching).
+   */
+  static forRoot(
+    clientConfig: ClientConfig,
+    opts: { worker?: boolean; realtime?: boolean } = {},
+  ): DynamicModule {
     return {
       module: AppModule,
       imports: [
@@ -48,7 +54,7 @@ export class AppModule {
         ServiceTypesModule,
         JobsModule,
         BillingModule,
-        ...(opts.worker ? [] : [RealtimeModule]),
+        ...(opts.worker || opts.realtime === false ? [] : [RealtimeModule]),
         ...featureModules(clientConfig),
       ],
       controllers: [HealthController, ClientConfigController],

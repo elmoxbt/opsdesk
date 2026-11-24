@@ -15,3 +15,9 @@ clients/*
 
 # Local editor/agent tooling
 .claude/
+
+# Vercel CLI links
+.vercel
+
+.vercel
+.env*

@@ -53,6 +53,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
 function LiveUpdates({ me }: { me: AuthUser }) {
   const qc = useQueryClient();
   useEffect(() => {
+    // Serverless hosting has no sockets: refresh the job list every 30 s instead.
+    if (process.env.NEXT_PUBLIC_REALTIME_URL === "off") {
+      const t = setInterval(() => void qc.invalidateQueries({ queryKey: ["jobs"] }), 30_000);
+      return () => clearInterval(t);
+    }
     const socket = io(process.env.NEXT_PUBLIC_REALTIME_URL || undefined, {
       transports: ["websocket"],
       withCredentials: true,

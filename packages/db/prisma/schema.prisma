@@ -9,7 +9,9 @@
 // Money is stored as integer minor units (kobo/cents) to avoid float rounding.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  /// "native" for dev machines, rhel-openssl-3.0.x for Vercel/AWS Lambda functions.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
@@ -577,6 +579,17 @@ model Notification {
   @@unique([organizationId, dedupeKey])
   @@index([organizationId, entityType, entityId])
   @@index([organizationId, createdAt])
+}
+
+/// Object storage in Postgres, used when STORAGE_DRIVER=database (serverless demo deployments
+/// without S3). Objects are reached only through short-lived HMAC-signed URLs, like presigned S3
+/// URLs; keys already carry the organization and job, so this is a system table (no tenant column).
+model StoredObject {
+  key         String   @id
+  contentType String
+  sizeBytes   Int
+  data        Bytes
+  createdAt   DateTime @default(now())
 }
 
 model AuditLog {

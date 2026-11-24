@@ -170,6 +170,10 @@ Rate limits are per client IP (login, booking, checkout) and per API key, stored
 
 ### Public demo deployments
 
+**Serverless (Vercel), as the live demo does:** three Vercel projects with root directories `apps/api` (`apps/api/vercel.json`: one function + a daily cron), `apps/tech` and `apps/web`, plus Neon Postgres from the Vercel marketplace. API env: `SERVERLESS=true`, `DEMO_MODE=true`, `STORAGE_DRIVER=database`, `COOKIE_SECURE=true`, `JWT_ACCESS_SECRET`, `DATA_ENCRYPTION_KEY`, `CRON_SECRET`, `APP_URL`/`WEB_ORIGIN` (the web address). Web env: `API_URL`, `TECH_URL`, `NEXT_PUBLIC_REALTIME_URL=off`, `DEMO_LOGINS=true`. Technician app env: `API_URL`, `NEXT_PUBLIC_REALTIME_URL=off`. Run migrations, bootstrap and the seed once against the database's direct (unpooled) URL. Not for real clients: no live updates, objects in Postgres, and demo-only payments.
+
+**On a server:**
+
 A sales demo is a normal deployment with demo data and one-click sign-in: set `DEMO_LOGINS=true` (and the same value for `OWNER_INITIAL_PASSWORD` and `DEMO_PASSWORD`) and deploy with `--seed-demo`. Never set `DEMO_LOGINS` for a real client.
 
 ### Other overrides

@@ -69,6 +69,17 @@ export const envSchema = z
     PAYMENTS_MODE: z.enum(["paystack", "fake"]).optional(),
     PAYSTACK_SECRET_KEY: z.string().optional(),
     PAYSTACK_BASE_URL: z.url().default("https://api.paystack.co"),
+    /**
+     * A public SALES DEMO: allows the fake checkout, the inline queue and in-memory rate
+     * limits in production. Never set for a real client (deploy-client.sh doesn't).
+     */
+    DEMO_MODE: z.stringbool().default(false),
+    /** Running as a serverless function (Vercel): no WebSocket gateway, no timers; work outlives the response via waitUntil. */
+    SERVERLESS: z.stringbool().default(false),
+    /** "s3" (MinIO/S3/R2) or "database" (objects in Postgres behind signed URLs: serverless demos without S3). */
+    STORAGE_DRIVER: z.enum(["s3", "database"]).default("s3"),
+    /** Shared secret for scheduled HTTP triggers (Vercel Cron sends it as a Bearer token). */
+    CRON_SECRET: z.string().min(16).optional(),
     SENTRY_DSN: z
       .union([z.literal(""), z.url()])
       .optional()
@@ -79,7 +90,7 @@ export const envSchema = z
     if (prod && !env.COOKIE_SECURE) {
       ctx.addIssue({ code: "custom", path: ["COOKIE_SECURE"], message: "Must be true in production" });
     }
-    if (prod && env.QUEUE_DRIVER === "inline") {
+    if (prod && env.QUEUE_DRIVER === "inline" && !env.DEMO_MODE) {
       ctx.addIssue({ code: "custom", path: ["QUEUE_DRIVER"], message: "Use bullmq in production" });
     }
     if (prod && !env.DATA_ENCRYPTION_KEY) {
@@ -89,11 +100,11 @@ export const envSchema = z
         message: "Required in production (openssl rand -base64 32)",
       });
     }
-    if (prod && env.PAYMENTS_MODE === "fake") {
+    if (prod && env.PAYMENTS_MODE === "fake" && !env.DEMO_MODE) {
       ctx.addIssue({
         code: "custom",
         path: ["PAYMENTS_MODE"],
-        message: "The fake provider is not allowed in production",
+        message: "The fake provider is not allowed in production (only on a DEMO_MODE sales demo)",
       });
     }
     if (env.PAYSTACK_SECRET_KEY && !env.PAYSTACK_SECRET_KEY.startsWith("sk_")) {
@@ -109,9 +120,10 @@ export const envSchema = z
     const prod = env.NODE_ENV === "production";
     return {
       ...env,
-      QUEUE_DRIVER: env.QUEUE_DRIVER ?? (prod ? "bullmq" : "inline"),
-      PAYMENTS_MODE: env.PAYMENTS_MODE ?? (prod ? "paystack" : "fake"),
-      RATE_LIMIT_STORE: env.RATE_LIMIT_STORE ?? (prod ? "redis" : "memory"),
+      // A serverless demo has no Redis: everything runs in-process.
+      QUEUE_DRIVER: env.QUEUE_DRIVER ?? (prod && !env.SERVERLESS ? "bullmq" : "inline"),
+      PAYMENTS_MODE: env.PAYMENTS_MODE ?? (prod && !env.DEMO_MODE ? "paystack" : "fake"),
+      RATE_LIMIT_STORE: env.RATE_LIMIT_STORE ?? (prod && !env.SERVERLESS ? "redis" : "memory"),
       WEBHOOKS_ALLOW_PRIVATE: prod ? false : (env.WEBHOOKS_ALLOW_PRIVATE ?? true),
     } as const;
   });

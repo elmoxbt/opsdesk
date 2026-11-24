@@ -1,0 +1,14 @@
+# Never upload local secrets or build output to Vercel; it installs and builds from source.
+.env
+.env.local
+.env.*.local
+clients/*
+!clients/example/
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+e2e/test-results
+e2e/playwright-report
+.claude

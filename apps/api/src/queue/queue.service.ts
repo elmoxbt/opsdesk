@@ -66,6 +66,16 @@ interface Driver {
  * (never inside it, so a slow PDF doesn't slow the response). Retries like
  * BullMQ does, so handlers are written for retries in both modes.
  */
+/**
+ * Serverless hosts freeze a function once its response is sent. The serverless
+ * entry point registers Vercel's waitUntil here, so inline jobs (PDFs, emails,
+ * webhooks) are allowed to finish after the response.
+ */
+let keepAlive: ((work: Promise<unknown>) => void) | undefined;
+export function setBackgroundKeepAlive(fn: (work: Promise<unknown>) => void): void {
+  keepAlive = fn;
+}
+
 class InlineDriver implements Driver {
   private readonly logger = new Logger("Queue:inline");
   private handlers = new Map<JobName, JobHandler<JobName>>();
@@ -84,6 +94,7 @@ class InlineDriver implements Driver {
       this.runWithRetry(name, payload),
     );
     this.running.add(run);
+    keepAlive?.(run);
     void run.finally(() => this.running.delete(run));
   }
 
@@ -203,7 +214,8 @@ export class QueueService
     this.driver =
       env.QUEUE_DRIVER === "bullmq"
         ? new BullMqDriver(env.REDIS_URL, env.RUN_WORKER)
-        : new InlineDriver(env.NODE_ENV !== "test");
+        : // No timers in tests or on serverless (cron there is an HTTP trigger: see CronController).
+          new InlineDriver(env.NODE_ENV !== "test" && !env.SERVERLESS);
   }
 
   register<N extends JobName>(name: N, handler: JobHandler<N>): void {

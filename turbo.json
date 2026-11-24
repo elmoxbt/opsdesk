@@ -7,7 +7,8 @@
     },
     "build": {
       "dependsOn": ["^build", "generate"],
-      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "env": ["API_URL", "TECH_URL", "NEXT_PUBLIC_*", "BUILD_ID", "NEXT_OUTPUT", "CLIENT_*", "FEATURE_*"]
     },
     "typecheck": {
       "dependsOn": ["^build", "generate"]

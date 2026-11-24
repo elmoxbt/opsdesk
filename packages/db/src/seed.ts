@@ -55,16 +55,27 @@ const SERVICES = [
     defaultPriceMinor: 2_000_000,
     description: "Clean, gas check and drain flush.",
   },
-  { name: "Leak repair", defaultDurationMinutes: 60, defaultPriceMinor: 1_500_000, description: null },
+  {
+    name: "Leak repair",
+    defaultDurationMinutes: 60,
+    defaultPriceMinor: 1_500_000,
+    description: "Find and fix leaking pipes, taps and fittings.",
+  },
   {
     name: "Deep cleaning",
     defaultDurationMinutes: 240,
     defaultPriceMinor: 4_500_000,
     description: "Whole-home deep clean, up to 3 bedrooms.",
   },
+  {
+    name: "Electrical fault finding",
+    defaultDurationMinutes: 90,
+    defaultPriceMinor: 2_500_000,
+    description: "Trace and fix tripping breakers, dead sockets and faulty wiring.",
+  },
 ];
 /** Relative popularity of each service above. */
-const SERVICE_WEIGHTS = [5, 2, 4, 6, 2];
+const SERVICE_WEIGHTS = [5, 2, 4, 6, 2, 3];
 
 const STOCK = [
   {
@@ -206,7 +217,8 @@ async function main(): Promise<void> {
     services.push(
       await prisma.serviceType.upsert({
         where: { organizationId_name: { organizationId: org.id, name: s.name } },
-        update: {},
+        // Keep demo descriptions current on existing databases; never touch prices or names.
+        update: { description: s.description },
         create: { ...s, organizationId: org.id },
       }),
     );

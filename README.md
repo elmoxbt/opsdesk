@@ -6,7 +6,7 @@ OpsDesk is a **white-label operations app for small service businesses** (plumbe
 
 **Each deployment serves one business.** Its name, branding, regional settings and modules come from one typed file, [`config/client.config.ts`](config/client.config.ts), plus env overrides, all validated with Zod. Optional modules (inventory, payments, booking portal, technician app, analytics, public API) switch on or off per client. A new client goes from blank VPS to live HTTPS instance with nightly backups via [`scripts/deploy-client.sh`](scripts/deploy-client.sh); see **[Deploying a client](docs/deploying-a-client.md)**.
 
-**Try it:** run it locally in five commands (below) and use the one-click demo sign-in buttons on `/login`. A public demo deployment is the same stack with `DEMO_LOGINS=true` and `--seed-demo` (see the [deploy guide](docs/deploying-a-client.md)).
+**Live demo:** https://opsdesk-iota.vercel.app (sign in with the one-click demo buttons on `/login`; the technician app is at `/tech`, API reference at `/api/docs`). Or run it locally in five commands (below). A public demo deployment is the same stack with `DEMO_LOGINS=true` and `--seed-demo` (see the [deploy guide](docs/deploying-a-client.md)).
 
 **What a day looks like in it:** a customer books on the client's own site (`/` → `/book/<slug>`); it lands in the dispatcher's "to schedule" tray, live; they drag it onto a technician; the customer gets a confirmation; the technician works it from the PWA (offline if need be: photos, parts, a signature); the office invoices it in one click; the customer pays from the link; the owner sees it in analytics. That whole path is one Playwright test.
 
@@ -231,6 +231,14 @@ The sync engine is unit-tested with an in-memory store and a fake executor ([eng
 **Demo data and demo mode.** The seed is deterministic (a seeded PRNG): 4 staff, 5 services, stock, 50 customers and exactly 200 jobs, covering four months of finished, invoiced and paid work, today's board at every stage, two weeks ahead, and a tray of unscheduled requests, some from online booking. It never double-books a technician (it fills each technician's day from a cursor), so it respects the database's no-overlap constraint, and it's idempotent. `DEMO_LOGINS=true` adds one-click sign-in buttons for each role; it's read on the server per request and is never set for a real client.
 
 **Each client's own home page.** With the booking portal on, `/` is the business's public page (their name, colours, services and a "Book a visit" button), not a SaaS landing page: the white-label product is the client's, not ours. Sections reveal on scroll, the services marquee pauses on hover, and both stay still with reduced motion.
+
+**The live demo runs serverless; real clients don't.** A client's deployment is the Docker stack (API, worker, Redis, MinIO, Caddy) on their own server. The public demo instead runs on Vercel with Neon Postgres, which needed three switches rather than a fork:
+
+- `SERVERLESS=true`: the API boots as one Vercel function (`apps/api/api/index.js` loads the compiled Nest app); no WebSocket gateway (screens refetch every 30 s instead, `NEXT_PUBLIC_REALTIME_URL=off`); background jobs run in-process and are kept alive past the response with Vercel's `waitUntil`; overdue reminders arrive as a daily Vercel Cron call guarded by `CRON_SECRET`.
+- `STORAGE_DRIVER=database`: photos, signatures and PDFs live in Postgres behind HMAC-signed, expiring URLs on our own API: the same contract as presigned S3 URLs, so no caller changed. (Capped at Vercel's 4.5 MB body limit; photos are compressed on the device first.)
+- `DEMO_MODE=true`: allows the test checkout and in-process queue in production. It's the only way past those production guards, and the client deploy script never sets it.
+
+The web app is the public address and routes `/api` and `/tech` to the other two Vercel projects, so cookies, the service worker and signed URLs stay on one origin, as Caddy does on a server.
 
 **Client-side auth gate.** The refresh cookie is scoped to `/api/auth`, so the Next server never sees it on page requests. Instead, the app shell calls `/auth/me` (which refreshes transparently), shows a skeleton meanwhile, and redirects to `/login?next=…` only if that fails. `next` is checked against open redirects.
 

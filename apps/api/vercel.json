@@ -1,0 +1,26 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
+  "buildCommand": "cd ../.. && pnpm --filter @opsdesk/db exec prisma generate && pnpm turbo run build --filter=@opsdesk/api",
+  "outputDirectory": "public",
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 60,
+      "includeFiles": "{dist/**,../../node_modules/.prisma/client/**,../../node_modules/pdfkit/js/data/**}"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/index.js"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/overdue-reminders",
+      "schedule": "0 8 * * *"
+    }
+  ],
+  "regions": ["fra1"]
+}

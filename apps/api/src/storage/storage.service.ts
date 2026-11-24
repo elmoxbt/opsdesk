@@ -10,10 +10,22 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Global, Inject, Injectable, Module } from "@nestjs/common";
 import { ENV, type Env } from "../config/env";
+import { PrismaService } from "../prisma/prisma.service";
+import { DatabaseStorageDriver } from "./database-storage";
+import { StoredObjectsController } from "./stored-objects.controller";
 
 export interface ObjectHead {
   sizeBytes: number;
   contentType: string | undefined;
+}
+
+/** What the app needs from object storage. Callers depend on StorageService, never on a driver. */
+export interface StorageDriver {
+  presignPut(key: string, contentType: string, expiresInSeconds?: number): Promise<string>;
+  presignGet(key: string, expiresInSeconds?: number, downloadName?: string): Promise<string>;
+  put(key: string, body: Buffer, contentType: string): Promise<void>;
+  head(key: string): Promise<ObjectHead | null>;
+  delete(key: string): Promise<void>;
 }
 
 /**
@@ -25,13 +37,12 @@ export interface ObjectHead {
  * endpoint, one that SIGNS URLs for the host browsers can reach. The signature
  * covers the host, so it must be signed for the public one.
  */
-@Injectable()
-export class StorageService {
+export class S3StorageDriver implements StorageDriver {
   private readonly internal: S3Client;
   private readonly signer: S3Client;
   readonly bucket: string;
 
-  constructor(@Inject(ENV) env: Env) {
+  constructor(env: Env) {
     const base = {
       region: env.S3_REGION,
       forcePathStyle: true, // MinIO and most S3-compatibles need path-style URLs
@@ -91,6 +102,38 @@ export class StorageService {
   }
 }
 
+/**
+ * Object storage for photos, signatures and PDFs. S3 (MinIO, AWS, R2) in a normal
+ * deployment; Postgres-backed with signed URLs (DatabaseStorageDriver) for a
+ * serverless demo that has no S3. Same contract either way: short-lived signed
+ * URLs, so the browser never holds credentials and nothing is public.
+ */
+@Injectable()
+export class StorageService implements StorageDriver {
+  private readonly driver: StorageDriver;
+
+  constructor(@Inject(ENV) env: Env, prisma: PrismaService) {
+    this.driver =
+      env.STORAGE_DRIVER === "database" ? new DatabaseStorageDriver(env, prisma) : new S3StorageDriver(env);
+  }
+
+  presignPut(key: string, contentType: string, expiresInSeconds = 300): Promise<string> {
+    return this.driver.presignPut(key, contentType, expiresInSeconds);
+  }
+  presignGet(key: string, expiresInSeconds = 900, downloadName?: string): Promise<string> {
+    return this.driver.presignGet(key, expiresInSeconds, downloadName);
+  }
+  put(key: string, body: Buffer, contentType: string): Promise<void> {
+    return this.driver.put(key, body, contentType);
+  }
+  head(key: string): Promise<ObjectHead | null> {
+    return this.driver.head(key);
+  }
+  delete(key: string): Promise<void> {
+    return this.driver.delete(key);
+  }
+}
+
 @Global()
-@Module({ providers: [StorageService], exports: [StorageService] })
+@Module({ controllers: [StoredObjectsController], providers: [StorageService], exports: [StorageService] })
 export class StorageModule {}

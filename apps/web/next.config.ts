@@ -11,7 +11,8 @@ const API_URL = process.env.API_URL ?? "http://localhost:4000";
 /**
  * Socket.IO endpoint. In production, Caddy routes /socket.io to the API on the
  * same origin, so this stays empty. In dev, Next rewrites don't proxy WebSocket
- * upgrades, so the browser connects to the API port directly.
+ * upgrades, so the browser connects to the API port directly. "off" disables live
+ * updates (serverless hosting can't hold sockets); screens refetch periodically instead.
  */
 const REALTIME_URL =
   process.env.NEXT_PUBLIC_REALTIME_URL ?? (process.env.NODE_ENV === "production" ? "" : API_URL);
@@ -30,7 +31,17 @@ const config: NextConfig = {
   // Proxy /api to Nest so auth cookies are first-party in dev. In production
   // Caddy routes /api before requests ever reach Next; this is a harmless fallback.
   async rewrites() {
-    return [{ source: "/api/:path*", destination: `${API_URL}/api/:path*` }];
+    return [
+      { source: "/api/:path*", destination: `${API_URL}/api/:path*` },
+      // Serverless hosting (Vercel): the technician PWA is its own deployment, served under
+      // this domain so it shares cookies and the service worker scope. (Caddy does this on a VPS.)
+      ...(process.env.TECH_URL
+        ? [
+            { source: "/tech", destination: `${process.env.TECH_URL}/tech` },
+            { source: "/tech/:path*", destination: `${process.env.TECH_URL}/tech/:path*` },
+          ]
+        : []),
+    ];
   },
 };
 

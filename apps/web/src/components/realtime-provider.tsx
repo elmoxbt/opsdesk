@@ -17,7 +17,10 @@ import { refreshSession } from "@/lib/api/client";
 import { qk } from "@/lib/api/hooks";
 import { upsertJobInBoard } from "@/lib/board-cache";
 
-export type RealtimeStatus = "connecting" | "live" | "offline";
+export type RealtimeStatus = "connecting" | "live" | "offline" | "disabled";
+/** Serverless deployments can't hold WebSockets: NEXT_PUBLIC_REALTIME_URL=off. */
+const REALTIME_OFF = process.env.NEXT_PUBLIC_REALTIME_URL === "off";
+const POLL_MS = 30_000;
 const PULSE_MS = 1600;
 
 interface RealtimeState {
@@ -38,12 +41,20 @@ export const usePulse = (jobId: string): number | undefined => useContext(Realti
  */
 export function RealtimeProvider({ user, children }: { user: AuthUser; children: ReactNode }) {
   const qc = useQueryClient();
-  const [status, setStatus] = useState<RealtimeStatus>("connecting");
+  const [status, setStatus] = useState<RealtimeStatus>(REALTIME_OFF ? "disabled" : "connecting");
   const [pulses, setPulses] = useState<Record<string, number>>({});
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const [celebrate, setCelebrate] = useState(false);
 
   useEffect(() => {
+    if (REALTIME_OFF) {
+      // No socket: refresh job and billing views every 30 s instead (and on tab focus, by default).
+      const t = setInterval(() => {
+        void qc.invalidateQueries({ queryKey: ["jobs"] });
+        void qc.invalidateQueries({ queryKey: ["invoices"] });
+      }, POLL_MS);
+      return () => clearInterval(t);
+    }
     const url = process.env.NEXT_PUBLIC_REALTIME_URL || undefined; // undefined = same origin
     const socket = io(url, { transports: ["websocket"], withCredentials: true });
     let connectedBefore = false;
@@ -117,6 +128,7 @@ export function RealtimeProvider({ user, children }: { user: AuthUser; children:
 
 export function LiveIndicator() {
   const { status } = useRealtime();
+  if (status === "disabled") return null;
   const label = status === "live" ? "Live" : status === "connecting" ? "Connecting…" : "Reconnecting…";
   return (
     <span
