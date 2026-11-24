@@ -76,9 +76,11 @@ describe("API keys", () => {
     const list = (await owner.agent.get("/api/developer/api-keys").expect(200)).body as Array<
       Record<string, unknown>
     >;
-    expect(JSON.stringify(list)).not.toContain(k.key.split("_")[2]);
+    // The secret may itself contain "_" (base64url), so take everything after the prefix.
+    const secret = k.key.slice(`opsk_${k.prefix}_`.length);
+    expect(JSON.stringify(list)).not.toContain(secret);
     const row = await ctx.db.apiKey.findUniqueOrThrow({ where: { id: k.id } });
-    expect(row.keyHash).not.toContain(k.key.split("_")[2]);
+    expect(row.keyHash).not.toContain(secret);
   });
 
   it("can do exactly what their scopes allow, and nothing else", async () => {
