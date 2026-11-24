@@ -5,7 +5,7 @@
 #
 # The client's config is compiled and validated INTO the image (a typo fails the
 # build, not production). Secrets and CLIENT_*/FEATURE_* overrides arrive at runtime via env.
-ARG NODE_VERSION=22.11.0
+ARG NODE_VERSION=22.20.0
 
 FROM node:${NODE_VERSION}-alpine AS base
 RUN apk add --no-cache libc6-compat openssl

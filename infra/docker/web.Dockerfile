@@ -2,7 +2,7 @@
 #
 # OpsDesk web app for ONE client (Next.js standalone output: small runtime image).
 #   docker build -f infra/docker/web.Dockerfile --build-arg CLIENT_CONFIG=clients/acme/client.config.ts .
-ARG NODE_VERSION=22.11.0
+ARG NODE_VERSION=22.20.0
 
 FROM node:${NODE_VERSION}-alpine AS base
 RUN apk add --no-cache libc6-compat

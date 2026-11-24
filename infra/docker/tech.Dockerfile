@@ -2,7 +2,7 @@
 #
 # OpsDesk technician PWA for ONE client, served at /tech (Next.js standalone).
 #   docker build -f infra/docker/tech.Dockerfile --build-arg CLIENT_CONFIG=clients/acme/client.config.ts .
-ARG NODE_VERSION=22.11.0
+ARG NODE_VERSION=22.20.0
 
 FROM node:${NODE_VERSION}-alpine AS base
 RUN apk add --no-cache libc6-compat
