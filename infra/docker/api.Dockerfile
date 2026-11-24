@@ -23,6 +23,8 @@ COPY --from=pruned /repo/out/json/ ./
 COPY --from=pruned /repo/out/pnpm-lock.yaml ./pnpm-lock.yaml
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 COPY --from=pruned /repo/out/full/ ./
+# turbo prune keeps workspaces, not root config files the builds extend.
+COPY --from=pruned /repo/tsconfig.base.json ./tsconfig.base.json
 ARG CLIENT_CONFIG=config/client.config.ts
 COPY ${CLIENT_CONFIG} ./config/client.config.ts
 RUN pnpm turbo run build --filter=@opsdesk/api... \
